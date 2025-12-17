@@ -1,0 +1,1481 @@
+import React, { useState, useEffect } from 'react';
+import { initializeApp } from 'firebase/app';
+import { 
+  getFirestore, collection, addDoc, query, where, 
+  onSnapshot, doc, setDoc, getDocs, orderBy, deleteDoc, getDoc, updateDoc 
+} from 'firebase/firestore';
+import { 
+  getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken 
+} from 'firebase/auth';
+import { 
+  Users, BookOpen, DollarSign, Calendar, LogOut, School, 
+  CheckCircle, XCircle, Send, UserPlus, Image as ImageIcon, PlusCircle, Trash2, ChevronRight, RefreshCw, Phone, MessageSquare, Star, TrendingUp, Menu, X, Search, GraduationCap, AlertTriangle, Camera, FileText, Printer, Eye, History, Bell, Clock, Lock, Image, Wallet, Receipt
+} from 'lucide-react';
+
+// --- Firebase Config & Initialization ---
+const firebaseConfig = JSON.parse(__firebase_config);
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-school-app';
+
+// --- Default Images (Fixed) ---
+const DEFAULT_LOGO = "https://cdn-icons-png.flaticon.com/512/3609/3609741.png"; // School Icon
+const DEFAULT_BG = "https://images.unsplash.com/photo-1523050854058-8df90110c9f1?q=80&w=2070&auto=format&fit=crop"; // School Building
+
+// --- Helper Hook for School Assets (Logo & Background) ---
+const useSchoolAssets = () => {
+  // Initialize with Defaults
+  const [assets, setAssets] = useState({ 
+      logo: DEFAULT_LOGO, 
+      background: DEFAULT_BG, 
+      name: 'Keen Islamic Public School' 
+  });
+  
+  useEffect(() => {
+    // Listener for Logo
+    const logoRef = doc(db, 'artifacts', appId, 'public', 'data', 'assets', 'logo');
+    const unsubLogo = onSnapshot(logoRef, (snap) => {
+      if (snap.exists() && snap.data().image) {
+          setAssets(prev => ({ ...prev, logo: snap.data().image }));
+      }
+    });
+
+    // Listener for Background
+    const bgRef = doc(db, 'artifacts', appId, 'public', 'data', 'assets', 'background');
+    const unsubBg = onSnapshot(bgRef, (snap) => {
+      if (snap.exists() && snap.data().image) {
+          setAssets(prev => ({ ...prev, background: snap.data().image }));
+      }
+    });
+
+    return () => { unsubLogo(); unsubBg(); };
+  }, []);
+
+  return assets;
+};
+
+// --- Helper: Update Assets (Admin Only) ---
+const updateAsset = async (type, file) => {
+    if (!file) return;
+    if (file.size > 800000) { // Limit to ~800KB to be safe with Firestore
+        alert("Image bohot bari hai. Please 800KB se choti image use karein.");
+        return;
+    }
+    
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+        const base64 = reader.result;
+        try {
+            // Save to separate documents to avoid size limits
+            await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'assets', type), { 
+                image: base64,
+                updatedAt: Date.now()
+            });
+            alert(`${type === 'logo' ? 'Logo' : 'Background'} updated successfully!`);
+        } catch (e) {
+            console.error(e);
+            alert("Upload failed. Try a smaller image.");
+        }
+    };
+    reader.readAsDataURL(file);
+};
+
+// --- Shared Components ---
+const Card = ({ children, className = "" }) => (
+  <div className={`bg-white/90 backdrop-blur-sm rounded-xl shadow-sm border border-slate-100 p-6 transition-all hover:shadow-md ${className}`}>
+    {children}
+  </div>
+);
+
+const Footer = ({ dark = false }) => (
+    <div className={`text-center py-6 text-xs font-medium ${dark ? 'text-slate-500' : 'text-slate-400'}`}>
+        Created by Subhan Mughal
+    </div>
+);
+
+const Header = ({ user, onLogout, title }) => {
+  const { logo, name } = useSchoolAssets();
+  
+  // FIX: Using user.id directly to ensure ghazanfar74 is restricted
+  const isRestrictedAdmin = user.id === 'ghazanfar74'; 
+  const canEditAssets = user.role === 'admin' && !isRestrictedAdmin;
+
+  return (
+    <header className="bg-white/90 backdrop-blur-md border-b border-slate-200 sticky top-0 z-30 print:hidden">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="relative group">
+             <div className="bg-slate-900 p-1 rounded-lg flex items-center justify-center overflow-hidden w-10 h-10 border-2 border-slate-100 shadow-sm">
+                <img src={logo} alt="School Logo" className="w-full h-full object-contain" />
+             </div>
+             
+             {/* Admin: Upload Logo Button (Hidden for ghazanfar74) */}
+             {canEditAssets && (
+                 <label className="absolute -bottom-2 -right-2 bg-amber-500 text-white p-1 rounded-full cursor-pointer shadow-md hover:bg-amber-600 transition-colors z-10" title="Change Logo">
+                     <Camera size={10} />
+                     <input type="file" accept="image/*" className="hidden" onChange={(e) => updateAsset('logo', e.target.files[0])} />
+                 </label>
+             )}
+          </div>
+          <div>
+             <h1 className="font-bold text-slate-800 text-lg leading-tight hidden md:block">{name}</h1>
+             <h1 className="font-bold text-slate-800 text-lg leading-tight md:hidden">KIPS</h1>
+             {title && <p className="text-xs text-slate-500 font-medium">{title}</p>}
+          </div>
+        </div>
+        <div className="flex items-center gap-4">
+          
+          {/* Admin: Change Background Button (Hidden for ghazanfar74) */}
+          {canEditAssets && (
+              <label className="cursor-pointer flex items-center gap-1 text-xs font-bold text-slate-600 hover:text-indigo-600 bg-slate-100 px-3 py-1.5 rounded-lg border border-slate-200 transition">
+                  <Image size={14} /> Change BG
+                  <input type="file" accept="image/*" className="hidden" onChange={(e) => updateAsset('background', e.target.files[0])} />
+              </label>
+          )}
+
+          <div className="text-right hidden sm:block">
+             <p className="text-sm font-semibold text-slate-900">{user.name}</p>
+             <p className="text-xs text-slate-500 capitalize">{user.role}</p>
+          </div>
+          <button onClick={onLogout} className="p-2 text-slate-400 hover:text-rose-600 transition-colors" title="Logout">
+            <LogOut size={20} />
+          </button>
+        </div>
+      </div>
+    </header>
+  );
+};
+
+// --- Helper Component: Student Profile Modal with 12 Month Record ---
+const StudentProfileModal = ({ student, onClose }) => {
+    const [attendanceHistory, setAttendanceHistory] = useState({});
+    
+    useEffect(() => {
+        if (!student) return;
+        const attRef = collection(db, 'artifacts', appId, 'public', 'data', 'attendance');
+        const unsub = onSnapshot(attRef, (snapshot) => {
+            const stats = {};
+            snapshot.forEach(doc => {
+                const data = doc.data();
+                if (data.studentId === student.id) {
+                    const dateObj = new Date(data.date);
+                    const monthKey = dateObj.toLocaleString('default', { month: 'long', year: 'numeric' });
+                    
+                    if (!stats[monthKey]) stats[monthKey] = { p: 0, a: 0, l: 0 };
+                    
+                    if (data.status === 'present') stats[monthKey].p++;
+                    else if (data.status === 'absent') stats[monthKey].a++;
+                    else if (data.status === 'leave') stats[monthKey].l++;
+                }
+            });
+            const sortedKeys = Object.keys(stats).sort((a,b) => new Date(b) - new Date(a));
+            const sortedStats = {};
+            sortedKeys.forEach(k => sortedStats[k] = stats[k]);
+            setAttendanceHistory(sortedStats);
+        });
+        return () => unsub();
+    }, [student]);
+
+    if (!student) return null;
+
+    return (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[60] flex items-center justify-center p-4 animate-in fade-in">
+           <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl max-h-[85vh] overflow-y-auto">
+               <div className="flex justify-between items-center mb-4 border-b pb-4">
+                    <div>
+                        <h3 className="font-bold text-xl text-slate-900">{student.name}</h3>
+                        <p className="text-sm text-slate-500">Roll No: {student.rollNo} | Class: {student.classId}</p>
+                    </div>
+                    <button onClick={onClose}><X size={24} className="text-slate-400 hover:text-slate-600" /></button>
+               </div>
+               
+               <div className="space-y-4">
+                   <div className="bg-slate-50 p-4 rounded-xl space-y-2">
+                       <p className="text-xs text-slate-400 uppercase font-bold">Contact Details</p>
+                       <div className="flex items-center justify-between text-sm">
+                           <span className="text-slate-600">Parent 1:</span>
+                           <div className="flex items-center gap-2">
+                               <span className="font-mono font-medium">{student.parentPhone1 || '--'}</span>
+                               {student.parentPhone1 && <a href={`tel:${student.parentPhone1}`} className="text-green-600 hover:bg-green-50 p-1 rounded"><Phone size={14}/></a>}
+                           </div>
+                       </div>
+                       <div className="flex items-center justify-between text-sm">
+                           <span className="text-slate-600">Parent 2:</span>
+                           <div className="flex items-center gap-2">
+                               <span className="font-mono font-medium">{student.parentPhone2 || '--'}</span>
+                               {student.parentPhone2 && <a href={`tel:${student.parentPhone2}`} className="text-green-600 hover:bg-green-50 p-1 rounded"><Phone size={14}/></a>}
+                           </div>
+                       </div>
+                   </div>
+
+                   <div>
+                       <h4 className="font-bold text-slate-800 mb-3 flex items-center gap-2">
+                           <TrendingUp size={18} className="text-indigo-600"/> Yearly Attendance Report
+                       </h4>
+                       <div className="space-y-3">
+                           {Object.keys(attendanceHistory).length === 0 ? (
+                               <p className="text-center text-slate-400 text-sm py-4">No attendance records found.</p>
+                           ) : (
+                               Object.entries(attendanceHistory).map(([month, stat]) => (
+                                   <div key={month} className="border border-slate-100 rounded-lg p-3 flex justify-between items-center hover:bg-slate-50 transition">
+                                       <span className="font-medium text-slate-700 text-sm">{month}</span>
+                                       <div className="flex gap-3 text-xs font-bold">
+                                           <span className="text-emerald-600 bg-emerald-50 px-2 py-1 rounded">P: {stat.p}</span>
+                                           <span className="text-rose-600 bg-rose-50 px-2 py-1 rounded">A: {stat.a}</span>
+                                           <span className="text-amber-600 bg-amber-50 px-2 py-1 rounded">L: {stat.l}</span>
+                                       </div>
+                                   </div>
+                               ))
+                           )}
+                       </div>
+                   </div>
+               </div>
+           </div>
+       </div>
+    );
+};
+
+// --- Helper: Seed Data ---
+const seedDatabase = async () => {
+  const usersRef = collection(db, 'artifacts', appId, 'public', 'data', 'users');
+  const demoUsers = [
+      { username: 'admin1', password: '123', role: 'admin', name: 'Principal Sir', classId: null },
+      { username: 'ghazanfar74', password: '413457', role: 'admin', name: 'Admin Ghazanfar', classId: null }, 
+      { username: 'teacher2', password: '123', role: 'teacher', name: 'Ms. Ayesha', classId: '2' },
+      { username: 'student1', password: '123', role: 'student', name: 'Ali Ahmed', classId: '2', feeStatus: 'paid', feeAmount: 3000, dues: 0, rollNo: '101', parentPhone1: '03001234567' },
+      { username: 'student2', password: '123', role: 'student', name: 'Sara Khan', classId: '2', feeStatus: 'unpaid', feeAmount: 3000, dues: 500, rollNo: '102', parentPhone1: '03007654321' },
+      { username: 'student3', password: '123', role: 'student', name: 'Bilal Raza', classId: '2', feeStatus: 'paid', feeAmount: 2500, dues: 0, rollNo: '103', parentPhone1: '03211234567' },
+  ];
+
+  try {
+      for (const u of demoUsers) {
+          await setDoc(doc(usersRef, u.username), u);
+      }
+      return true;
+  } catch (e) {
+      console.error("Seeding error:", e);
+      return false;
+  }
+};
+
+// --- 1. Login Screen ---
+const Login = ({ onLogin }) => {
+  const [userId, setUserId] = useState('admin1');
+  const [password, setPassword] = useState('123');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const { logo, background, name } = useSchoolAssets();
+
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+    
+    const cleanId = userId.trim();
+    const cleanPass = password; 
+
+    try {
+      const userDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', cleanId);
+      const userSnap = await getDoc(userDocRef);
+
+      if (userSnap.exists()) {
+        const userData = userSnap.data();
+        if (userData.password === cleanPass) {
+            onLogin({ ...userData, id: userSnap.id });
+        } else {
+            setError('Invalid Password. Please try again.');
+        }
+      } else {
+        if ((cleanId === 'admin1' && cleanPass === '123') || (cleanId === 'ghazanfar74' && cleanPass === '413457')) {
+           setLoading(true);
+           const success = await seedDatabase();
+           if (success) {
+               onLogin({ username: 'admin1', role: 'admin', name: 'Principal Sir', classId: null, id: 'admin1' });
+               return; 
+           }
+        }
+        setError('User ID not found. Check spelling or ask Admin.');
+      }
+    } catch (err) {
+      console.error(err);
+      setError('Connection Error. Please check internet.');
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div className="min-h-screen flex bg-slate-50 relative">
+      {/* Dynamic Background Image */}
+      {background && (
+          <div 
+            className="absolute inset-0 z-0 bg-cover bg-center" 
+            style={{ backgroundImage: `url(${background})` }}
+          />
+      )}
+      <div className="absolute inset-0 z-0 bg-slate-900/40 backdrop-blur-[2px]" />
+
+      <div className="hidden lg:flex w-1/2 relative z-10 flex-col justify-between p-12">
+        <div className="relative z-10">
+            <div className="flex items-center gap-4 mb-6">
+                {logo ? (
+                    <img src={logo} className="w-20 h-20 object-contain bg-white/90 rounded-2xl p-2 shadow-2xl backdrop-blur-md" alt="Logo" />
+                ) : (
+                    <School size={60} className="text-amber-400" />
+                )}
+                <div>
+                    <span className="text-white font-black text-5xl tracking-tight block">KIPS</span>
+                    <span className="text-amber-300 font-medium text-lg tracking-wider">PORTAL</span>
+                </div>
+            </div>
+            <h1 className="text-6xl font-bold text-white mb-6 leading-tight drop-shadow-lg">
+                Excellence in <br/><span className="text-amber-400">Education</span> & <br/>Character.
+            </h1>
+            <p className="text-slate-200 text-xl max-w-md leading-relaxed drop-shadow-md">
+                Empowering the next generation with knowledge, values, and a brighter future.
+            </p>
+        </div>
+        <div className="text-slate-300 text-sm">
+            © {new Date().getFullYear()} {name}
+            <br />
+            <span className="opacity-60 text-xs block mt-1">Created by Subhan Mughal</span>
+        </div>
+      </div>
+
+      <div className="w-full lg:w-1/2 flex items-center justify-center p-6 relative z-10">
+        <div className="w-full max-w-md">
+            <div className="lg:hidden text-center mb-8">
+                <div className="inline-block p-4 rounded-2xl bg-white/90 mb-4 shadow-xl backdrop-blur-sm">
+                    {logo ? (
+                        <img src={logo} className="w-16 h-16 object-contain" alt="Logo" />
+                    ) : (
+                        <School size={40} className="text-amber-500" />
+                    )}
+                </div>
+                <h2 className="text-2xl font-bold text-white drop-shadow-md">{name}</h2>
+            </div>
+
+            <div className="bg-white/95 backdrop-blur-md p-8 rounded-3xl shadow-2xl border border-white/50">
+                <h2 className="text-2xl font-bold text-slate-900 mb-2">Welcome Back</h2>
+                <p className="text-slate-500 mb-8">Please enter your ID and Password.</p>
+                {error && (
+                    <div className="bg-rose-50 text-rose-600 px-4 py-3 rounded-lg mb-6 text-sm flex items-center gap-2 border border-rose-100">
+                        <XCircle size={16} /> {error}
+                    </div>
+                )}
+                <form onSubmit={handleLogin} className="space-y-5">
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1.5">User ID</label>
+                        <input type="text" value={userId} onChange={(e) => setUserId(e.target.value)} className="w-full px-4 py-3 rounded-lg border border-slate-200 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all bg-slate-50 focus:bg-white" placeholder="e.g. admin1" />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1.5">Password</label>
+                        <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full px-4 py-3 rounded-lg border border-slate-200 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all bg-slate-50 focus:bg-white" placeholder="••••••••" />
+                    </div>
+                    <button type="submit" disabled={loading} className="w-full bg-slate-900 text-white py-3.5 rounded-lg font-bold hover:bg-slate-800 transition-all active:scale-[0.98] disabled:opacity-70 shadow-lg shadow-slate-900/20">
+                        {loading ? 'Authenticating...' : 'Sign In'}
+                    </button>
+                </form>
+                <div className="mt-8 text-center text-xs text-slate-400">
+                    <p>Created by Subhan Mughal</p>
+                </div>
+            </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// --- 2. Admin Dashboard ---
+const AdminDashboard = ({ currentUser, onLogout }) => {
+  const [stats, setStats] = useState({ totalStudents: 0, totalRevenue: 0, presentToday: 0, absentToday: 0 });
+  const [students, setStudents] = useState([]);
+  const [teachers, setTeachers] = useState([]);
+  const [showAddClass, setShowAddClass] = useState(false);
+  const [showAddStudent, setShowAddStudent] = useState(false);
+  const [selectedClassForView, setSelectedClassForView] = useState(null); 
+  const { background } = useSchoolAssets();
+  
+  const [deleteModal, setDeleteModal] = useState({ show: false, id: null, role: null });
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [showReports, setShowReports] = useState(false);
+  const [archivedReports, setArchivedReports] = useState([]);
+  const [selectedReport, setSelectedReport] = useState(null);
+  const [showApprovals, setShowApprovals] = useState(false);
+  const [pendingRemarks, setPendingRemarks] = useState([]);
+  const [classAttendance, setClassAttendance] = useState({}); // New for Admin Attendance Edit
+
+  // NEW: Expense States
+  const [showExpenses, setShowExpenses] = useState(false);
+  const [expenses, setExpenses] = useState([]);
+  const [newExpense, setNewExpense] = useState({ title: '', amount: '', category: 'Salary', date: new Date().toISOString().split('T')[0] });
+
+  const [viewStudent, setViewStudent] = useState(null); 
+
+  const [newClass, setNewClass] = useState({ name: '', teacherName: '', teacherId: '', teacherPass: '' });
+  const [newStudent, setNewStudent] = useState({ name: '', username: '', password: '', classId: '', feeStatus: 'unpaid', feeAmount: '', dues: '0', rollNo: '', parentPhone1: '', parentPhone2: '' });
+
+  useEffect(() => {
+    // 1. Users Listener
+    const usersRef = collection(db, 'artifacts', appId, 'public', 'data', 'users');
+    const unsub = onSnapshot(usersRef, (snapshot) => {
+      let totalFee = 0;
+      let stdList = [];
+      let tchList = [];
+      snapshot.forEach(doc => {
+        const data = doc.data();
+        if (data.role === 'student') {
+            stdList.push({...data, id: doc.id});
+            if (data.feeStatus === 'paid') totalFee += Number(data.feeAmount || 0);
+        } else if (data.role === 'teacher') {
+            tchList.push({...data, id: doc.id});
+        }
+      });
+      setStudents(stdList);
+      setTeachers(tchList);
+      setStats(prev => ({ ...prev, totalStudents: stdList.length, totalRevenue: totalFee }));
+    });
+
+    // 2. Attendance Listener
+    const today = new Date().toISOString().split('T')[0];
+    const attendanceRef = collection(db, 'artifacts', appId, 'public', 'data', 'attendance');
+    const unsubAtt = onSnapshot(attendanceRef, (snapshot) => {
+      let present = 0; let absent = 0;
+      const classMap = {}; // Map for specific class view
+      snapshot.forEach(doc => {
+        const data = doc.data();
+        if (data.date === today) {
+            if (data.status === 'present') present++;
+            if (data.status === 'absent') absent++;
+            
+            // Populate class map
+            classMap[data.studentId] = { status: data.status, timestamp: data.timestamp };
+        }
+      });
+      setStats(prev => ({ ...prev, presentToday: present, absentToday: absent }));
+      setClassAttendance(classMap);
+    });
+
+    // 3. Reports Listener
+    const reportsRef = collection(db, 'artifacts', appId, 'public', 'data', 'reports');
+    const unsubReports = onSnapshot(reportsRef, (snapshot) => {
+        const list = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
+        list.sort((a, b) => b.timestamp - a.timestamp);
+        setArchivedReports(list);
+    });
+
+    // 4. Pending Remarks Listener
+    const remarksRef = collection(db, 'artifacts', appId, 'public', 'data', 'remarks');
+    const unsubRemarks = onSnapshot(remarksRef, (snapshot) => {
+        const pending = [];
+        snapshot.forEach(doc => {
+            const data = doc.data();
+            if (data.status === 'pending') {
+                pending.push({ ...data, id: doc.id });
+            }
+        });
+        setPendingRemarks(pending);
+    });
+
+    // 5. Expenses Listener
+    const expRef = collection(db, 'artifacts', appId, 'public', 'data', 'expenses');
+    const unsubExp = onSnapshot(query(expRef, orderBy('timestamp', 'desc')), (snapshot) => {
+        const list = snapshot.docs.map(doc => ({...doc.data(), id: doc.id}));
+        setExpenses(list);
+    });
+
+    return () => { unsub(); unsubAtt(); unsubReports(); unsubRemarks(); unsubExp(); };
+  }, []);
+
+  // --- Handlers ---
+  const handleAddClassSubmit = async (e) => { e.preventDefault(); 
+      try {
+          const tid = newClass.teacherId.trim();
+          await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', tid), { username: tid, password: newClass.teacherPass, name: newClass.teacherName, role: 'teacher', classId: newClass.name.trim() });
+          alert(`Class ${newClass.name} created!`); setNewClass({ name: '', teacherName: '', teacherId: '', teacherPass: '' }); setShowAddClass(false);
+      } catch (e) { alert("Error creating class."); }
+  };
+  
+  const handleAddStudentSubmit = async (e) => { e.preventDefault(); 
+      try {
+          const sid = newStudent.username.trim();
+          await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', sid), { ...newStudent, username: sid, role: 'student', feeAmount: Number(newStudent.feeAmount) || 0, dues: Number(newStudent.dues) || 0 });
+          alert('Student added successfully!'); setNewStudent({ name: '', username: '', password: '', classId: '', feeStatus: 'unpaid', feeAmount: '', dues: '0', rollNo: '', parentPhone1: '', parentPhone2: '' }); setShowAddStudent(false);
+      } catch (e) { alert("Error adding student"); }
+  };
+  
+  const handleAddExpense = async (e) => {
+      e.preventDefault();
+      if(!newExpense.title || !newExpense.amount) return;
+      try {
+          await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'expenses'), {
+              ...newExpense,
+              amount: Number(newExpense.amount),
+              timestamp: Date.now()
+          });
+          setNewExpense({ title: '', amount: '', category: 'Salary', date: new Date().toISOString().split('T')[0] });
+          alert('Expense Added Successfully!');
+      } catch (e) {
+          console.error(e);
+          alert('Error adding expense');
+      }
+  };
+
+  const deleteExpense = async (id) => {
+      if(window.confirm('Delete this expense record?')) {
+          await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'expenses', id));
+      }
+  };
+  
+  const confirmDelete = (e, userId, role) => { 
+      if (e) { e.preventDefault(); e.stopPropagation(); } 
+      setDeleteModal({ show: true, id: userId, role: role }); 
+  };
+
+  const executeDelete = async () => { 
+      if (!deleteModal.id) return; 
+      setIsDeleting(true); 
+      try { 
+          const collectionName = deleteModal.role === 'Message' ? 'remarks' : 'users';
+          const docRef = doc(db, 'artifacts', appId, 'public', 'data', collectionName, deleteModal.id);
+          await deleteDoc(docRef); 
+          setDeleteModal({ show: false, id: null, role: null }); 
+          if(deleteModal.role === 'Message') alert("Message Rejected Successfully!");
+          else alert("User Deleted Successfully!");
+      } catch (err) { alert("Error occurred: " + err.message); } 
+      setIsDeleting(false); 
+  };
+
+  const handleToggleFee = async (studentId, currentStatus) => { const newStatus = currentStatus === 'paid' ? 'unpaid' : 'paid'; try { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', studentId), { feeStatus: newStatus }); } catch (e) { alert("Error"); } };
+  const handleStartNewMonth = async () => { if (!window.confirm("⚠ Start New Month?\n\nThis will:\n1. Add unpaid fees to Dues.\n2. Reset all fee statuses to 'Unpaid'.\n\nDo you want to proceed?")) return; try { const updates = students.map(async (std) => { let newDues = Number(std.dues || 0); if (std.feeStatus === 'unpaid') newDues += Number(std.feeAmount || 0); await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', std.id), { feeStatus: 'unpaid', dues: newDues }); }); await Promise.all(updates); alert("New month started successfully."); } catch (e) { alert("Error starting new month."); } };
+
+  const approveRemark = async (id) => {
+      try {
+          await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'remarks', id), { status: 'approved' });
+      } catch(e) { alert('Error approving'); }
+  };
+
+  // ADMIN ATTENDANCE OVERRIDE
+  const adminMarkAttendance = async (studentId, status, classId) => {
+      const today = new Date().toISOString().split('T')[0];
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'attendance', `${today}_${studentId}`), { 
+          date: today, 
+          studentId, 
+          classId: classId, 
+          status, 
+          timestamp: Date.now() // Admin change sets new timestamp
+      });
+  };
+  
+  const classStudents = selectedClassForView ? students.filter(s => s.classId === selectedClassForView.classId) : [];
+
+  return (
+    <div className="min-h-screen bg-slate-50 relative">
+      {/* Dashboard Background */}
+      {background && <div className="absolute inset-0 z-0 bg-cover bg-center opacity-5 fixed" style={{ backgroundImage: `url(${background})` }} />}
+      
+      <div className="relative z-10">
+        <Header user={currentUser} onLogout={onLogout} title="Administrator Portal" />
+
+        <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 print:hidden">
+          
+          {/* Stats */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-10">
+            {[
+              { label: 'Monthly Revenue', val: `Rs ${stats.totalRevenue.toLocaleString()}`, icon: DollarSign, color: 'text-emerald-600', bg: 'bg-emerald-50' },
+              { label: 'Present Today', val: stats.presentToday, icon: CheckCircle, color: 'text-indigo-600', bg: 'bg-indigo-50' },
+              { label: 'Absent Today', val: stats.absentToday, icon: XCircle, color: 'text-rose-600', bg: 'bg-rose-50' },
+              { label: 'Total Students', val: stats.totalStudents, icon: Users, color: 'text-amber-600', bg: 'bg-amber-50' }
+            ].map((item, i) => (
+              <Card key={i} className="flex items-center gap-4">
+                <div className={`p-3 rounded-xl ${item.bg}`}>
+                  <item.icon size={24} className={item.color} />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-slate-500">{item.label}</p>
+                  <p className="text-2xl font-bold text-slate-900">{item.val}</p>
+                </div>
+              </Card>
+            ))}
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-4 mb-8">
+              <div className="flex gap-3 flex-wrap">
+                  <button onClick={() => { setShowAddClass(false); setShowAddStudent(true); }} className="flex items-center gap-2 bg-slate-900 text-white px-5 py-2.5 rounded-lg hover:bg-slate-800 transition shadow-lg shadow-slate-900/10 font-medium"><UserPlus size={18} /> New Admission</button>
+                  <button onClick={() => { setShowAddStudent(false); setShowAddClass(true); }} className="flex items-center gap-2 bg-white text-slate-700 border border-slate-200 px-5 py-2.5 rounded-lg hover:bg-slate-50 transition font-medium"><PlusCircle size={18} /> Add Class/Teacher</button>
+                  <button onClick={() => setShowReports(true)} className="flex items-center gap-2 bg-indigo-50 text-indigo-700 border border-indigo-200 px-5 py-2.5 rounded-lg hover:bg-indigo-100 transition font-medium"><FileText size={18} /> Reports</button>
+                  
+                  <button onClick={() => setShowExpenses(true)} className="flex items-center gap-2 bg-emerald-50 text-emerald-700 border border-emerald-200 px-5 py-2.5 rounded-lg hover:bg-emerald-100 transition font-medium">
+                      <Wallet size={18} /> Manage Expenses
+                  </button>
+
+                  <button onClick={() => setShowApprovals(true)} className="flex items-center gap-2 bg-white text-slate-700 border border-slate-200 px-5 py-2.5 rounded-lg hover:bg-slate-50 transition font-medium relative">
+                      <MessageSquare size={18} /> Approvals
+                      {pendingRemarks.length > 0 && (
+                          <span className="absolute -top-2 -right-2 bg-rose-500 text-white text-[10px] font-bold w-5 h-5 flex items-center justify-center rounded-full shadow-md animate-bounce">
+                              {pendingRemarks.length}
+                          </span>
+                      )}
+                  </button>
+              </div>
+              <button onClick={handleStartNewMonth} className="flex items-center gap-2 text-amber-600 hover:text-amber-700 font-medium px-4 py-2 rounded-lg hover:bg-amber-50 transition"><RefreshCw size={18} /> Start New Month</button>
+          </div>
+
+          {/* --- MODALS --- */}
+          {(showAddStudent || showAddClass) && (
+              <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in">
+                  <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden border border-slate-100">
+                      <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+                          <h3 className="font-bold text-lg text-slate-800">{showAddStudent ? 'Student Admission' : 'Create New Class'}</h3>
+                          <button onClick={() => {setShowAddStudent(false); setShowAddClass(false)}} className="p-1 hover:bg-slate-200 rounded-full text-slate-500"><X size={20} /></button>
+                      </div>
+                      <div className="p-6">
+                          {showAddStudent && (
+                            <form onSubmit={handleAddStudentSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <input type="text" placeholder="Roll No" className="input-field" value={newStudent.rollNo} onChange={e => setNewStudent({...newStudent, rollNo: e.target.value})} />
+                                <input type="text" placeholder="Full Name" required className="input-field" value={newStudent.name} onChange={e => setNewStudent({...newStudent, name: e.target.value})} />
+                                <select required className="input-field" value={newStudent.classId} onChange={e => setNewStudent({...newStudent, classId: e.target.value})}>
+                                    <option value="">Select Class</option>
+                                    {teachers.map(t => <option key={t.id} value={t.classId}>{t.classId} ({t.name})</option>)}
+                                </select>
+                                <input type="text" placeholder="Login ID" required className="input-field" value={newStudent.username} onChange={e => setNewStudent({...newStudent, username: e.target.value})} />
+                                <input type="text" placeholder="Password" required className="input-field" value={newStudent.password} onChange={e => setNewStudent({...newStudent, password: e.target.value})} />
+                                <input type="tel" placeholder="Parent Phone 1" className="input-field" value={newStudent.parentPhone1} onChange={e => setNewStudent({...newStudent, parentPhone1: e.target.value})} />
+                                <input type="tel" placeholder="Parent Phone 2" className="input-field" value={newStudent.parentPhone2} onChange={e => setNewStudent({...newStudent, parentPhone2: e.target.value})} />
+                                <input type="number" placeholder="Monthly Fee" className="input-field" value={newStudent.feeAmount} onChange={e => setNewStudent({...newStudent, feeAmount: e.target.value})} />
+                                <input type="number" placeholder="Prev. Dues" className="input-field" value={newStudent.dues} onChange={e => setNewStudent({...newStudent, dues: e.target.value})} />
+                                <div className="md:col-span-2 flex justify-end gap-3 mt-4">
+                                    <button type="button" onClick={() => setShowAddStudent(false)} className="btn-secondary">Cancel</button>
+                                    <button type="submit" className="btn-primary">Admit Student</button>
+                                </div>
+                            </form>
+                          )}
+                          {showAddClass && (
+                              <form onSubmit={handleAddClassSubmit} className="grid grid-cols-1 gap-4">
+                                  <input type="text" placeholder="Class Name (e.g. 5, KG)" required className="input-field" value={newClass.name} onChange={e => setNewClass({...newClass, name: e.target.value})} />
+                                  <input type="text" placeholder="Teacher Name" required className="input-field" value={newClass.teacherName} onChange={e => setNewClass({...newClass, teacherName: e.target.value})} />
+                                  <input type="text" placeholder="Teacher Login ID" required className="input-field" value={newClass.teacherId} onChange={e => setNewClass({...newClass, teacherId: e.target.value})} />
+                                  <input type="text" placeholder="Teacher Password" required className="input-field" value={newClass.teacherPass} onChange={e => setNewClass({...newClass, teacherPass: e.target.value})} />
+                                  <div className="flex justify-end gap-3 mt-4">
+                                    <button type="button" onClick={() => setShowAddClass(false)} className="btn-secondary">Cancel</button>
+                                    <button type="submit" className="btn-primary">Create Class</button>
+                                </div>
+                              </form>
+                          )}
+                      </div>
+                  </div>
+              </div>
+          )}
+
+          {/* Expenses Modal */}
+          {showExpenses && (
+              <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in">
+                  <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl h-[85vh] flex flex-col overflow-hidden">
+                      <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-emerald-50">
+                          <div>
+                              <h3 className="font-bold text-lg text-emerald-800 flex items-center gap-2"><Receipt size={20}/> Manage Expenses</h3>
+                              <p className="text-xs text-emerald-600">Track salaries, bills & maintenance</p>
+                          </div>
+                          <button onClick={() => setShowExpenses(false)} className="p-1 hover:bg-emerald-100 rounded-full text-emerald-600"><X size={20} /></button>
+                      </div>
+                      
+                      <div className="p-6 bg-slate-50 border-b border-slate-100">
+                          <form onSubmit={handleAddExpense} className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+                              <div className="md:col-span-1">
+                                  <label className="text-xs font-bold text-slate-500 mb-1 block">Title</label>
+                                  <input type="text" required className="input-field py-2" placeholder="e.g. Aug Electricity" value={newExpense.title} onChange={e => setNewExpense({...newExpense, title: e.target.value})} />
+                              </div>
+                              <div className="md:col-span-1">
+                                  <label className="text-xs font-bold text-slate-500 mb-1 block">Amount</label>
+                                  <input type="number" required className="input-field py-2" placeholder="0.00" value={newExpense.amount} onChange={e => setNewExpense({...newExpense, amount: e.target.value})} />
+                              </div>
+                              <div className="md:col-span-1">
+                                  <label className="text-xs font-bold text-slate-500 mb-1 block">Category</label>
+                                  <select className="input-field py-2" value={newExpense.category} onChange={e => setNewExpense({...newExpense, category: e.target.value})}>
+                                      <option>Salary</option>
+                                      <option>Electricity Bill</option>
+                                      <option>Maintenance</option>
+                                      <option>Stationery</option>
+                                      <option>Other</option>
+                                  </select>
+                              </div>
+                              <button type="submit" className="btn-primary py-2.5 bg-emerald-600 hover:bg-emerald-700">Add Expense</button>
+                          </form>
+                      </div>
+
+                      <div className="flex-1 overflow-auto p-6 bg-white">
+                          {expenses.length === 0 ? (
+                              <div className="text-center py-10 text-slate-400">No expenses recorded yet.</div>
+                          ) : (
+                              <div className="space-y-3">
+                                  {expenses.map(exp => (
+                                      <div key={exp.id} className="flex justify-between items-center p-4 rounded-xl border border-slate-100 hover:shadow-sm transition bg-slate-50">
+                                          <div className="flex items-center gap-4">
+                                              <div className={`p-3 rounded-lg ${exp.category === 'Salary' ? 'bg-indigo-100 text-indigo-600' : exp.category.includes('Bill') ? 'bg-amber-100 text-amber-600' : 'bg-slate-200 text-slate-600'}`}>
+                                                  <DollarSign size={18} />
+                                              </div>
+                                              <div>
+                                                  <h4 className="font-bold text-slate-800">{exp.title}</h4>
+                                                  <p className="text-xs text-slate-500">{exp.category} • {exp.date}</p>
+                                              </div>
+                                          </div>
+                                          <div className="text-right">
+                                              <p className="font-bold text-rose-600">- Rs {Number(exp.amount).toLocaleString()}</p>
+                                              <button onClick={() => deleteExpense(exp.id)} className="text-xs text-slate-400 hover:text-rose-500 mt-1 flex items-center gap-1 ml-auto">
+                                                  <Trash2 size={12} /> Remove
+                                              </button>
+                                          </div>
+                                      </div>
+                                  ))}
+                              </div>
+                          )}
+                      </div>
+                  </div>
+              </div>
+          )}
+
+          {/* Delete Modal */}
+          {deleteModal.show && (
+              <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+                  <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden p-6 border-2 border-rose-100 text-center animate-in fade-in zoom-in-95 duration-200">
+                      <div className="w-16 h-16 bg-rose-100 rounded-full flex items-center justify-center mx-auto mb-4"><AlertTriangle size={32} className="text-rose-600" /></div>
+                      <h3 className="text-xl font-bold text-slate-900 mb-2">Delete {deleteModal.role}?</h3>
+                      <p className="text-slate-500 mb-6 text-sm">Are you sure you want to delete this {deleteModal.role}? <br/><span className="font-semibold text-rose-600">This action cannot be undone.</span></p>
+                      <div className="flex gap-3 justify-center">
+                          <button disabled={isDeleting} onClick={() => setDeleteModal({show: false, id: null, role: null})} className="px-5 py-2.5 rounded-xl border border-slate-200 text-slate-600 font-semibold hover:bg-slate-50 transition">Cancel</button>
+                          <button disabled={isDeleting} onClick={executeDelete} className="px-5 py-2.5 rounded-xl bg-rose-600 text-white font-bold hover:bg-rose-700 transition shadow-lg shadow-rose-600/30 flex items-center gap-2">{isDeleting ? 'Deleting...' : 'Yes, Delete'}</button>
+                      </div>
+                  </div>
+              </div>
+          )}
+
+          {/* Approval Modal */}
+          {showApprovals && (
+              <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                  <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl h-[70vh] flex flex-col overflow-hidden">
+                      <div className="px-6 py-4 border-b flex justify-between items-center bg-slate-50">
+                          <h3 className="font-bold text-lg text-slate-800">Pending Message Approvals</h3>
+                          <button onClick={() => setShowApprovals(false)} className="p-1 hover:bg-slate-200 rounded-full text-slate-500"><X size={20}/></button>
+                      </div>
+                      <div className="flex-1 overflow-auto p-6 bg-slate-50/50">
+                          {pendingRemarks.length === 0 ? (
+                              <div className="text-center text-slate-400 mt-20 flex flex-col items-center">
+                                  <CheckCircle size={40} className="mb-2 text-slate-300" />
+                                  <p>All caught up! No pending messages.</p>
+                              </div>
+                          ) : (
+                              <div className="space-y-4">
+                                  {pendingRemarks.map(msg => (
+                                      <div key={msg.id} className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col md:flex-row gap-4 justify-between items-start">
+                                          <div className="flex-1">
+                                              <div className="flex items-center gap-2 mb-2 text-xs">
+                                                  <span className="bg-slate-100 px-2 py-1 rounded font-bold text-slate-600">{msg.date}</span>
+                                                  <span className="text-slate-400">From: {msg.teacherName}</span>
+                                                  <span className="text-indigo-500 font-bold">To: {msg.studentName || 'Student'}</span>
+                                              </div>
+                                              <p className="text-slate-800 text-sm font-medium italic bg-slate-50 p-3 rounded-lg border border-slate-100">"{msg.text}"</p>
+                                          </div>
+                                          <div className="flex gap-2">
+                                              <button onClick={() => approveRemark(msg.id)} className="bg-emerald-50 text-emerald-600 p-2 rounded-lg hover:bg-emerald-100 border border-emerald-200" title="Approve"><CheckCircle size={20}/></button>
+                                              <button onClick={(e) => confirmDelete(e, msg.id, 'Message')} className="bg-rose-50 text-rose-600 p-2 rounded-lg hover:bg-rose-100 border border-rose-200" title="Reject (Delete)"><XCircle size={20}/></button>
+                                          </div>
+                                      </div>
+                                  ))}
+                              </div>
+                          )}
+                      </div>
+                  </div>
+              </div>
+          )}
+
+          {/* Reports Modal */}
+          {showReports && (
+              <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                  <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl h-[80vh] flex flex-col overflow-hidden">
+                      <div className="px-6 py-4 border-b flex justify-between items-center bg-slate-50">
+                          <h3 className="font-bold text-lg text-slate-800">Archived Monthly Reports</h3>
+                          <button onClick={() => setShowReports(false)} className="p-1 hover:bg-slate-200 rounded-full text-slate-500"><X size={20}/></button>
+                      </div>
+                      <div className="flex-1 overflow-auto p-6 bg-slate-50/50">
+                          {archivedReports.length === 0 ? (
+                              <div className="text-center text-slate-400 mt-20">No reports archived yet. Wait for month change.</div>
+                          ) : (
+                              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                                  {archivedReports.map(report => (
+                                      <div key={report.id} className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition cursor-pointer" onClick={() => setSelectedReport(report)}>
+                                          <div className="flex justify-between items-center mb-3">
+                                              <div className="bg-indigo-50 text-indigo-700 px-3 py-1 rounded text-xs font-bold uppercase">{report.month} {report.year}</div>
+                                              <FileText size={18} className="text-slate-400" />
+                                          </div>
+                                          <div className="space-y-2 text-sm text-slate-600">
+                                              <div className="flex justify-between"><span>Students:</span> <span className="font-semibold text-slate-900">{report.totalStudents}</span></div>
+                                              <div className="flex justify-between"><span>Revenue:</span> <span className="font-semibold text-emerald-600">Rs {report.totalRevenue}</span></div>
+                                              <div className="flex justify-between"><span>Dues:</span> <span className="font-semibold text-rose-500">Rs {report.totalDues}</span></div>
+                                          </div>
+                                      </div>
+                                  ))}
+                              </div>
+                          )}
+                      </div>
+                  </div>
+              </div>
+          )}
+
+          {/* Selected Report Detail */}
+          {selectedReport && (
+              <div className="fixed inset-0 bg-white z-[60] overflow-auto">
+                  <div className="max-w-4xl mx-auto p-8 print:p-0">
+                      <div className="flex justify-between items-start mb-8 print:hidden">
+                          <button onClick={() => setSelectedReport(null)} className="flex items-center gap-2 text-slate-500 hover:text-slate-800"><ChevronRight className="rotate-180" size={16}/> Back</button>
+                          <button onClick={() => window.print()} className="bg-slate-900 text-white px-4 py-2 rounded-lg flex items-center gap-2"><Printer size={16}/> Print PDF</button>
+                      </div>
+                      <div className="border border-slate-200 p-8 rounded-none bg-white">
+                          <div className="text-center mb-8 border-b border-slate-100 pb-6">
+                              {logo && <img src={logo} className="w-16 h-16 mx-auto mb-2 object-contain" />}
+                              <h1 className="text-3xl font-bold text-slate-900">{name}</h1>
+                              <p className="text-slate-500">Monthly Archive Report - {selectedReport.month} {selectedReport.year}</p>
+                              <p className="text-xs text-slate-400 mt-1">Generated on: {selectedReport.generatedDate}</p>
+                          </div>
+                          <div className="grid grid-cols-3 gap-4 mb-8">
+                              <div className="p-4 bg-slate-50 rounded border border-slate-100 text-center">
+                                  <p className="text-xs text-slate-500 uppercase font-bold">Total Students</p>
+                                  <p className="text-2xl font-bold text-slate-900">{selectedReport.totalStudents}</p>
+                              </div>
+                              <div className="p-4 bg-emerald-50 rounded border border-emerald-100 text-center">
+                                  <p className="text-xs text-emerald-600 uppercase font-bold">Revenue Collected</p>
+                                  <p className="text-2xl font-bold text-emerald-700">Rs {selectedReport.totalRevenue}</p>
+                              </div>
+                              <div className="p-4 bg-rose-50 rounded border border-rose-100 text-center">
+                                  <p className="text-xs text-rose-600 uppercase font-bold">Pending Dues</p>
+                                  <p className="text-2xl font-bold text-rose-700">Rs {selectedReport.totalDues}</p>
+                              </div>
+                          </div>
+                          <h3 className="font-bold text-lg mb-4 text-slate-800">Student Detailed List</h3>
+                          <table className="w-full text-left text-sm border">
+                              <thead className="bg-slate-100 text-slate-600 font-bold">
+                                  <tr>
+                                      <th className="p-2 border">Roll No</th>
+                                      <th className="p-2 border">Name</th>
+                                      <th className="p-2 border">Class</th>
+                                      <th className="p-2 border">Fee Status</th>
+                                      <th className="p-2 border text-right">Fee Amt</th>
+                                      <th className="p-2 border text-right">Dues</th>
+                                  </tr>
+                              </thead>
+                              <tbody>
+                                  {selectedReport.studentSnapshot && selectedReport.studentSnapshot.map((std, idx) => (
+                                      <tr key={idx} className="border-b">
+                                          <td className="p-2 border-r">{std.rollNo}</td>
+                                          <td className="p-2 border-r">{std.name}</td>
+                                          <td className="p-2 border-r">{std.classId}</td>
+                                          <td className={`p-2 border-r font-bold ${std.feeStatus==='paid'?'text-emerald-600':'text-rose-600'}`}>{std.feeStatus.toUpperCase()}</td>
+                                          <td className="p-2 border-r text-right">{std.feeAmount}</td>
+                                          <td className="p-2 text-right">{std.dues}</td>
+                                      </tr>
+                                  ))}
+                              </tbody>
+                          </table>
+                          <div className="mt-8 pt-8 border-t border-slate-200 flex justify-between text-xs text-slate-400">
+                              <p>System Generated Report</p>
+                              <p>{name} - Admin Portal</p>
+                          </div>
+                      </div>
+                  </div>
+              </div>
+          )}
+
+          {/* Classes Grid */}
+          <div>
+              <h3 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2">
+                  <div className="w-1 h-6 bg-amber-500 rounded-full"></div> Active Classes
+              </h3>
+              {teachers.length === 0 ? (
+                  <div className="text-center py-20 bg-white rounded-xl border border-dashed border-slate-300">
+                      <School className="mx-auto text-slate-300 mb-2" size={48} />
+                      <p className="text-slate-500">No classes found.</p>
+                  </div>
+              ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                      {teachers.map(t => (
+                          <div 
+                              key={t.id} 
+                              onClick={() => setSelectedClassForView(t)}
+                              className="bg-white group rounded-xl p-6 border border-slate-100 shadow-sm hover:shadow-xl hover:border-indigo-100 transition-all cursor-pointer relative overflow-hidden"
+                          >
+                              <div className="absolute top-0 right-0 p-4 z-10">
+                                  <button 
+                                      type="button"
+                                      onClick={(e) => confirmDelete(e, t.id, 'teacher')}
+                                      className="p-2 bg-rose-50 text-rose-500 rounded-lg hover:bg-rose-500 hover:text-white transition shadow-sm"
+                                      title="Delete Class & Teacher"
+                                  >
+                                      <Trash2 size={16} />
+                                  </button>
+                              </div>
+                              <div className="flex items-center gap-4 mb-4">
+                                  <div className="w-12 h-12 rounded-2xl bg-slate-900 text-white flex items-center justify-center font-bold text-xl shadow-lg shadow-slate-900/20">
+                                      {t.classId}
+                                  </div>
+                                  <div>
+                                      <p className="text-xs text-slate-400 font-semibold uppercase tracking-wider">Class</p>
+                                      <h4 className="font-bold text-slate-800 text-lg">{t.name}</h4>
+                                  </div>
+                              </div>
+                              <div className="flex items-center justify-between text-sm mt-4 pt-4 border-t border-slate-50">
+                                  <span className="text-slate-500">ID: {t.username}</span>
+                                  <span className="flex items-center gap-1 text-indigo-600 font-medium group-hover:translate-x-1 transition-transform">
+                                      Manage <ChevronRight size={16} />
+                                  </span>
+                              </div>
+                          </div>
+                      ))}
+                  </div>
+              )}
+          </div>
+
+          {/* Class Modal */}
+          {selectedClassForView && (
+              <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in">
+                  <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl h-[90vh] flex flex-col overflow-hidden">
+                      <div className="px-8 py-5 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+                          <div>
+                              <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-3">
+                                  Class {selectedClassForView.classId}
+                                  <span className="text-sm font-normal text-slate-500 bg-white px-3 py-1 rounded-full border border-slate-200 shadow-sm">
+                                      Teacher: {selectedClassForView.name}
+                                  </span>
+                              </h2>
+                          </div>
+                          <button onClick={() => setSelectedClassForView(null)} className="p-2 hover:bg-slate-200 rounded-full text-slate-500 transition"><X size={24} /></button>
+                      </div>
+                      
+                      <div className="flex-1 overflow-auto bg-white p-0">
+                          {classStudents.length === 0 ? (
+                              <div className="h-full flex flex-col items-center justify-center text-slate-400">
+                                  <Users size={64} className="mb-4 opacity-20" />
+                                  <p>No students in this class.</p>
+                              </div>
+                          ) : (
+                              <table className="w-full text-left border-collapse">
+                                  <thead className="bg-slate-50 sticky top-0 z-10 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                                  <tr>
+                                      <th className="p-5 border-b">Roll No</th>
+                                      <th className="p-5 border-b">Student Name</th>
+                                      <th className="p-5 border-b">Contact</th>
+                                      <th className="p-5 border-b">Financials</th>
+                                      <th className="p-5 border-b text-center">Attendance (Admin Override)</th>
+                                      <th className="p-5 border-b text-right">Actions</th>
+                                  </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-slate-50">
+                                  {classStudents.map(std => (
+                                      <tr key={std.id} className="hover:bg-slate-50/80 transition-colors">
+                                      <td className="p-5 font-mono text-slate-500 font-medium">{std.rollNo || 'N/A'}</td>
+                                      <td className="p-5">
+                                          <div className="flex items-center gap-3">
+                                              <div className="w-10 h-10 rounded-full bg-indigo-50 text-indigo-700 flex items-center justify-center font-bold text-sm border border-indigo-100">
+                                                  {std.name.charAt(0)}
+                                              </div>
+                                              <div>
+                                                  <p className="font-semibold text-slate-800">{std.name}</p>
+                                                  <p className="text-xs text-slate-400">ID: {std.username}</p>
+                                              </div>
+                                              <button onClick={() => setViewStudent(std)} className="ml-2 text-slate-300 hover:text-indigo-600 transition"><Eye size={16} /></button>
+                                          </div>
+                                      </td>
+                                      <td className="p-5">
+                                          <div className="text-sm text-slate-600 space-y-1">
+                                              {std.parentPhone1 && <div className="flex items-center gap-2"><Phone size={14} className="text-slate-400"/> {std.parentPhone1}</div>}
+                                              {std.parentPhone2 && <div className="flex items-center gap-2"><Phone size={14} className="text-slate-400"/> {std.parentPhone2}</div>}
+                                          </div>
+                                      </td>
+                                      <td className="p-5">
+                                          <div className="flex flex-col items-start gap-2">
+                                              <div className="flex items-center gap-2">
+                                                  <button onClick={() => handleToggleFee(std.id, std.feeStatus)} className={`px-3 py-1 rounded-md text-xs font-bold border transition-all active:scale-95 ${std.feeStatus === 'paid' ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100' : 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'}`}>
+                                                      {std.feeStatus}
+                                                  </button>
+                                                  <span className="text-sm text-slate-600 font-medium">Rs {std.feeAmount}</span>
+                                              </div>
+                                              {Number(std.dues) > 0 && <span className="text-xs font-bold text-rose-600 bg-rose-50 px-2 py-0.5 rounded border border-rose-100">Dues: Rs {std.dues}</span>}
+                                          </div>
+                                      </td>
+                                      <td className="p-5">
+                                          <div className="flex justify-center gap-1">
+                                              <button onClick={() => adminMarkAttendance(std.id, 'present', std.classId)} className={`w-8 h-8 rounded flex items-center justify-center ${classAttendance[std.id]?.status === 'present' ? 'bg-emerald-500 text-white' : 'bg-slate-100 text-slate-400'}`}><CheckCircle size={16}/></button>
+                                              <button onClick={() => adminMarkAttendance(std.id, 'absent', std.classId)} className={`w-8 h-8 rounded flex items-center justify-center ${classAttendance[std.id]?.status === 'absent' ? 'bg-rose-500 text-white' : 'bg-slate-100 text-slate-400'}`}><XCircle size={16}/></button>
+                                              <button onClick={() => adminMarkAttendance(std.id, 'leave', std.classId)} className={`w-8 h-8 rounded flex items-center justify-center ${classAttendance[std.id]?.status === 'leave' ? 'bg-amber-500 text-white' : 'bg-slate-100 text-slate-400'}`}><Clock size={16}/></button>
+                                          </div>
+                                      </td>
+                                      <td className="p-5 text-right">
+                                          <button 
+                                              type="button"
+                                              onClick={(e) => confirmDelete(e, std.id, 'student')}
+                                              className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition group"
+                                              title="Remove Student"
+                                          >
+                                              <Trash2 size={18} className="group-hover:scale-110 transition-transform" />
+                                          </button>
+                                      </td>
+                                      </tr>
+                                  ))}
+                                  </tbody>
+                              </table>
+                          )}
+                      </div>
+                  </div>
+              </div>
+          )}
+
+          {/* View Student Modal (Admin Reuse) */}
+          {viewStudent && <StudentProfileModal student={viewStudent} onClose={() => setViewStudent(null)} />}
+        </main>
+        
+        {/* FOOTER for Admin */}
+        <Footer dark={false} />
+      </div>
+    </div>
+  );
+};
+
+// --- 3. Teacher Dashboard ---
+const TeacherDashboard = ({ currentUser, onLogout }) => {
+  // ... (keep logic)
+  const [students, setStudents] = useState([]);
+  const [attendance, setAttendance] = useState({});
+  const [diaryEntry, setDiaryEntry] = useState('');
+  const [diaryImage, setDiaryImage] = useState(null);
+  const [loadingDiary, setLoadingDiary] = useState(false);
+  const [remarkModal, setRemarkModal] = useState({ show: false, studentId: null, studentName: '', text: '' });
+  const [viewStudent, setViewStudent] = useState(null);
+  const [diaryHistory, setDiaryHistory] = useState([]);
+  const [showDiaryHistory, setShowDiaryHistory] = useState(false);
+  const today = new Date().toISOString().split('T')[0];
+  const { background } = useSchoolAssets(); // Get Background
+
+  useEffect(() => {
+    // ... (Keep existing fetch logic)
+    const usersRef = collection(db, 'artifacts', appId, 'public', 'data', 'users');
+    const unsub = onSnapshot(usersRef, (snapshot) => {
+      const list = [];
+      snapshot.forEach(doc => {
+          const data = doc.data();
+          if(data.classId === currentUser.classId && data.role === 'student') list.push({...data, id: doc.id});
+      });
+      list.sort((a, b) => (Number(a.rollNo) || 9999) - (Number(b.rollNo) || 9999));
+      setStudents(list);
+    });
+    
+    const diaryRef = collection(db, 'artifacts', appId, 'public', 'data', 'diary');
+    const qDiary = query(diaryRef, where('classId', '==', currentUser.classId));
+    const unsubDiary = onSnapshot(qDiary, (snapshot) => {
+        const history = [];
+        snapshot.forEach(doc => history.push({...doc.data(), id: doc.id}));
+        history.sort((a,b) => (b.timestamp?.seconds||0)-(a.timestamp?.seconds||0));
+        setDiaryHistory(history);
+    });
+
+    const attendanceRef = collection(db, 'artifacts', appId, 'public', 'data', 'attendance');
+    const unsubAtt = onSnapshot(attendanceRef, (snapshot) => {
+      const attMap = {};
+      snapshot.forEach(doc => {
+        const data = doc.data();
+        if(data.date === today && data.classId === currentUser.classId) {
+            attMap[data.studentId] = { status: data.status, timestamp: data.timestamp };
+        }
+      });
+      setAttendance(attMap);
+    });
+    return () => { unsub(); unsubAtt(); unsubDiary(); };
+  }, [currentUser.classId, today]);
+
+  const markAttendance = async (studentId, status) => { 
+      const record = attendance[studentId];
+      if (record && record.timestamp && (Date.now() - record.timestamp > 3600000)) {
+          alert("Attendance locked! 1 hour has passed. Contact Admin to change.");
+          return;
+      }
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'attendance', `${today}_${studentId}`), { date: today, studentId, classId: currentUser.classId, status, timestamp: Date.now() }); 
+  };
+  // ... (keep other handlers same)
+  const handleSendRemark = async () => { if(!remarkModal.text) return; await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'remarks'), { studentId: remarkModal.studentId, studentName: remarkModal.studentName, teacherId: currentUser.username, teacherName: currentUser.name, text: remarkModal.text, status: 'pending', date: today, timestamp: new Date() }); alert("Remark sent for Admin Approval!"); setRemarkModal({ show: false, studentId: null, studentName: '', text: '' }); };
+  const handleImageChange = (e) => { const file = e.target.files[0]; if (file) { const reader = new FileReader(); reader.onloadend = () => setDiaryImage(reader.result); reader.readAsDataURL(file); } };
+  const sendDiary = async () => { if (!diaryEntry.trim() && !diaryImage) return; setLoadingDiary(true); await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'diary'), { classId: currentUser.classId, text: diaryEntry, image: diaryImage, date: today, teacherName: currentUser.name, timestamp: new Date() }); setDiaryEntry(''); setDiaryImage(null); setLoadingDiary(false); alert('Sent!'); };
+  const deleteDiaryEntry = async (id) => { if(window.confirm("Delete this diary entry?")) { await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'diary', id)); } };
+
+
+  return (
+    <div className="min-h-screen bg-slate-50 relative">
+       {/* Teacher Background */}
+       {background && <div className="absolute inset-0 z-0 bg-cover bg-center opacity-5 fixed" style={{ backgroundImage: `url(${background})` }} />}
+       
+       <div className="relative z-10 flex flex-col min-h-screen">
+           <Header user={currentUser} onLogout={onLogout} title={`Class ${currentUser.classId}`} />
+
+           <main className="max-w-5xl mx-auto px-4 py-8 grid gap-8 flex-1 w-full">
+              
+              <Card className="border-t-4 border-t-amber-500">
+                  <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-2">
+                          <BookOpen className="text-amber-500" />
+                          <h3 className="font-bold text-lg text-slate-800">Class Diary & Updates</h3>
+                      </div>
+                      <button onClick={() => setShowDiaryHistory(!showDiaryHistory)} className="text-sm text-indigo-600 font-medium flex items-center gap-1 hover:underline">
+                          <History size={16} /> {showDiaryHistory ? 'Hide History' : 'View History'}
+                      </button>
+                  </div>
+                  {showDiaryHistory ? (
+                      <div className="space-y-3 max-h-60 overflow-y-auto pr-2">
+                          {diaryHistory.length === 0 ? <p className="text-slate-400 text-sm">No history yet.</p> : 
+                          diaryHistory.map(item => (
+                              <div key={item.id} className="flex justify-between items-start bg-slate-50 p-3 rounded-lg border border-slate-100">
+                                  <div>
+                                      <p className="text-xs font-bold text-slate-500 mb-1">{item.date}</p>
+                                      <p className="text-sm text-slate-800 line-clamp-2">{item.text || '(Image only)'}</p>
+                                  </div>
+                                  <button onClick={() => deleteDiaryEntry(item.id)} className="text-rose-400 hover:text-rose-600 p-1"><Trash2 size={14}/></button>
+                              </div>
+                          ))}
+                      </div>
+                  ) : (
+                      <>
+                        <textarea 
+                            value={diaryEntry} onChange={(e) => setDiaryEntry(e.target.value)}
+                            placeholder="What did we learn today? Any homework?"
+                            className="w-full border border-slate-200 rounded-xl p-4 focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none h-32 resize-none text-slate-700 bg-slate-50"
+                        />
+                        <div className="flex flex-col sm:flex-row justify-between items-center mt-4 gap-4">
+                            <div className="flex items-center gap-3 w-full sm:w-auto">
+                                <label className="cursor-pointer bg-slate-100 hover:bg-slate-200 text-slate-600 px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition w-full justify-center sm:w-auto">
+                                    <ImageIcon size={18} /> Attach Image
+                                    <input type="file" accept="image/*" onChange={handleImageChange} className="hidden" />
+                                </label>
+                                {diaryImage && (
+                                    <div className="relative h-10 w-10">
+                                        <img src={diaryImage} className="h-full w-full object-cover rounded-lg border" />
+                                        <button onClick={() => setDiaryImage(null)} className="absolute -top-2 -right-2 bg-rose-500 text-white rounded-full p-0.5"><X size={12}/></button>
+                                    </div>
+                                )}
+                            </div>
+                            <button 
+                                onClick={sendDiary} 
+                                disabled={loadingDiary}
+                                className="w-full sm:w-auto bg-slate-900 text-white px-8 py-2.5 rounded-lg font-medium hover:bg-slate-800 transition flex items-center justify-center gap-2 shadow-lg shadow-slate-900/10"
+                            >
+                                <Send size={18} /> {loadingDiary ? 'Sending...' : 'Post Update'}
+                            </button>
+                        </div>
+                      </>
+                  )}
+              </Card>
+
+              <Card>
+                  <div className="flex items-center justify-between mb-6">
+                      <h3 className="font-bold text-lg text-slate-800">Attendance Register</h3>
+                      <div className="bg-slate-100 px-3 py-1 rounded-full text-xs font-bold text-slate-500">{today}</div>
+                  </div>
+                  <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse">
+                          <thead className="bg-slate-50 text-xs font-bold text-slate-500 uppercase">
+                              <tr>
+                                  <th className="p-4 rounded-l-lg">Student</th>
+                                  <th className="p-4 text-center">Attendance</th>
+                                  <th className="p-4 text-center rounded-r-lg">Actions</th>
+                              </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-50">
+                              {students.map(std => {
+                                  const record = attendance[std.id];
+                                  const isLocked = record && (Date.now() - record.timestamp > 3600000);
+                                  
+                                  return (
+                                  <tr key={std.id} className="group hover:bg-slate-50/50">
+                                      <td className="p-4">
+                                          <div className="flex items-center gap-3">
+                                              <div className="font-mono text-slate-400 text-sm w-8">{std.rollNo}</div>
+                                              <div>
+                                                  <p className="font-semibold text-slate-800">{std.name}</p>
+                                                  <div className="flex gap-2 text-[10px] font-bold uppercase tracking-wider">
+                                                      <span className={std.feeStatus === 'paid' ? 'text-emerald-600' : 'text-rose-500'}>{std.feeStatus}</span>
+                                                  </div>
+                                              </div>
+                                              <button 
+                                                onClick={() => setViewStudent(std)}
+                                                className="ml-2 text-slate-300 hover:text-indigo-600 transition"
+                                                title="View Details"
+                                              >
+                                                  <Eye size={16} />
+                                              </button>
+                                          </div>
+                                      </td>
+                                      <td className="p-4">
+                                          <div className="flex justify-center gap-2 items-center">
+                                              {isLocked && <Lock size={16} className="text-slate-400 mr-2" title="Locked by Time Limit" />}
+                                              <button onClick={() => markAttendance(std.id, 'present')} disabled={isLocked} className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all ${attendance[std.id]?.status === 'present' ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/30 scale-110' : 'bg-slate-100 text-slate-300 hover:bg-emerald-100 hover:text-emerald-400'} ${isLocked ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                                                  <CheckCircle size={20} />
+                                              </button>
+                                              <button onClick={() => markAttendance(std.id, 'absent')} disabled={isLocked} className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all ${attendance[std.id]?.status === 'absent' ? 'bg-rose-500 text-white shadow-lg shadow-rose-500/30 scale-110' : 'bg-slate-100 text-slate-300 hover:bg-rose-100 hover:text-rose-400'} ${isLocked ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                                                  <XCircle size={20} />
+                                              </button>
+                                              <button onClick={() => markAttendance(std.id, 'leave')} disabled={isLocked} className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all ${attendance[std.id]?.status === 'leave' ? 'bg-amber-500 text-white shadow-lg shadow-amber-500/30 scale-110' : 'bg-slate-100 text-slate-300 hover:bg-amber-100 hover:text-amber-400'} ${isLocked ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                                                  <Clock size={20} />
+                                              </button>
+                                          </div>
+                                      </td>
+                                      <td className="p-4 text-center">
+                                          <button 
+                                              onClick={() => setRemarkModal({ show: true, studentId: std.id, studentName: std.name, text: '' })}
+                                              className="text-slate-400 hover:text-indigo-600 p-2 rounded-lg hover:bg-indigo-50 transition"
+                                              title="Send Remark"
+                                          >
+                                              <MessageSquare size={20} />
+                                          </button>
+                                      </td>
+                                  </tr>
+                              )})}
+                          </tbody>
+                      </table>
+                  </div>
+              </Card>
+           </main>
+           
+           {/* Modals */}
+           {viewStudent && <StudentProfileModal student={viewStudent} onClose={() => setViewStudent(null)} />}
+           {remarkModal.show && (
+               <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                   <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl">
+                       <h3 className="font-bold text-lg text-slate-900 mb-4">Feedback for {remarkModal.studentName}</h3>
+                       <textarea 
+                         className="w-full border border-slate-200 rounded-xl p-3 h-32 mb-4 focus:ring-2 focus:ring-indigo-500/20 outline-none resize-none"
+                         placeholder="Write your observation..."
+                         value={remarkModal.text}
+                         onChange={(e) => setRemarkModal({...remarkModal, text: e.target.value})}
+                       />
+                       <div className="flex justify-end gap-3">
+                           <button onClick={() => setRemarkModal({ show: false, studentId: null, studentName: '', text: '' })} className="btn-secondary">Cancel</button>
+                           <button onClick={handleSendRemark} className="btn-primary bg-indigo-600">Send Remark</button>
+                       </div>
+                   </div>
+               </div>
+           )}
+
+           <Footer dark={false} />
+       </div>
+    </div>
+  );
+};
+
+// --- 4. Student (Parent) App - Mobile First UI ---
+const StudentDashboard = ({ currentUser, onLogout }) => {
+  // ... (keep exactly same logic as before, just adding background support)
+  const [activeTab, setActiveTab] = useState('diary');
+  const [data, setData] = useState({ diary: [], remarks: [], attendance: { p: 0, a: 0 }, history: {} });
+  const { logo, background, name } = useSchoolAssets(); // Get Background
+
+  useEffect(() => {
+    // ... (Keep existing fetch logic same)
+    const unsubD = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'diary'), snap => {
+        const items = []; snap.forEach(d => { if(d.data().classId === currentUser.classId) items.push({...d.data(), id: d.id}) });
+        items.sort((a,b) => (b.timestamp?.seconds||0)-(a.timestamp?.seconds||0));
+        setData(prev => ({...prev, diary: items}));
+    });
+    const unsubR = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'remarks'), snap => {
+        const items = []; snap.forEach(d => { 
+            const remark = d.data();
+            if(remark.studentId === currentUser.id && remark.status === 'approved') {
+                items.push({...remark, id: d.id});
+            }
+        });
+        items.sort((a,b) => (b.timestamp?.seconds||0)-(a.timestamp?.seconds||0));
+        setData(prev => ({...prev, remarks: items}));
+    });
+    
+    // Attendance Stats & History
+    const unsubA = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'attendance'), snap => {
+        let p=0, a=0; 
+        const stats = {};
+        snap.forEach(d => { 
+            if(d.data().studentId === currentUser.id) {
+                const data = d.data();
+                // Total Count
+                if (data.status === 'present') p++;
+                else if (data.status === 'absent') a++;
+                
+                // Monthly Grouping
+                const dateObj = new Date(data.date);
+                const monthKey = dateObj.toLocaleString('default', { month: 'long', year: 'numeric' });
+                if (!stats[monthKey]) stats[monthKey] = { p: 0, a: 0, l: 0 };
+                
+                if (data.status === 'present') stats[monthKey].p++;
+                else if (data.status === 'absent') stats[monthKey].a++;
+                else if (data.status === 'leave') stats[monthKey].l++;
+            }
+        });
+        
+        // Sort history by date desc
+        const sortedHistory = {};
+        Object.keys(stats).sort((a,b) => new Date(b) - new Date(a)).forEach(k => sortedHistory[k] = stats[k]);
+        
+        setData(prev => ({...prev, attendance: {p, a}, history: sortedHistory}));
+    });
+    return () => { unsubD(); unsubR(); unsubA(); };
+  }, [currentUser]);
+
+  return (
+    <div className="min-h-screen bg-slate-100 pb-24 font-sans relative flex flex-col">
+        {/* Mobile Header with BG */}
+        <div className="bg-slate-900 text-white pt-8 pb-16 px-6 rounded-b-[2.5rem] shadow-xl relative overflow-hidden">
+            {background && <div className="absolute inset-0 bg-cover bg-center opacity-20" style={{ backgroundImage: `url(${background})` }} />}
+            <div className="absolute top-0 right-0 w-32 h-32 bg-amber-500/10 rounded-full blur-3xl -mr-10 -mt-10"></div>
+            
+            <div className="relative z-10 flex justify-between items-start">
+                <div>
+                    <h1 className="text-2xl font-bold">{currentUser.name}</h1>
+                    <div className="flex items-center gap-2 text-slate-300 text-sm mt-1">
+                        <GraduationCap size={16} /> Class {currentUser.classId} <span className="w-1 h-1 bg-slate-500 rounded-full"></span> Roll: {currentUser.rollNo}
+                    </div>
+                </div>
+                <button onClick={onLogout} className="bg-white/10 p-2 rounded-full backdrop-blur-md hover:bg-white/20 transition">
+                    <LogOut size={18} />
+                </button>
+            </div>
+            
+            {/* Stats Overlay Card */}
+            <div className="mt-8 bg-white/10 backdrop-blur-md border border-white/10 p-4 rounded-2xl grid grid-cols-2 gap-4 relative z-10">
+                 <div>
+                     <p className="text-slate-300 text-xs mb-1">Fee Status</p>
+                     <div className={`font-bold text-lg ${currentUser.feeStatus === 'paid' ? 'text-emerald-400' : 'text-rose-400'}`}>
+                         {currentUser.feeStatus.toUpperCase()}
+                     </div>
+                     {Number(currentUser.dues) > 0 && <p className="text-xs text-rose-300 mt-0.5">Dues: Rs {currentUser.dues}</p>}
+                 </div>
+                 <div>
+                     <p className="text-slate-300 text-xs mb-1">Attendance</p>
+                     <div className="flex items-baseline gap-1">
+                         <span className="text-lg font-bold text-white">{data.attendance.p}</span>
+                         <span className="text-xs text-slate-400">Days</span>
+                     </div>
+                 </div>
+            </div>
+        </div>
+
+        {/* Content */}
+        <div className="px-4 -mt-8 relative z-20 flex-1">
+            <div className="bg-white rounded-2xl shadow-sm p-1.5 flex mb-6">
+                {['diary', 'performance', 'history'].map(tab => (
+                    <button 
+                        key={tab}
+                        onClick={() => setActiveTab(tab)}
+                        className={`flex-1 py-2.5 text-sm font-semibold rounded-xl capitalize transition-all ${activeTab === tab ? 'bg-slate-900 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
+                    >
+                        {tab}
+                    </button>
+                ))}
+            </div>
+
+            <div className="space-y-4">
+                {activeTab === 'diary' && (
+                    data.diary.length === 0 ? <p className="text-center text-slate-400 py-10">No diary updates yet.</p> :
+                    data.diary.map(item => (
+                        <div key={item.id} className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 animate-in fade-in slide-in-from-bottom-2">
+                            <div className="flex justify-between items-center mb-3">
+                                <span className="bg-amber-50 text-amber-700 text-xs font-bold px-2 py-1 rounded">{item.date}</span>
+                                <div className="flex items-center gap-2">
+                                    {logo && <img src={logo} className="w-4 h-4 object-contain rounded-full" />}
+                                    <span className="text-xs text-slate-400">By {item.teacherName}</span>
+                                </div>
+                            </div>
+                            <p className="text-slate-800 text-sm leading-relaxed whitespace-pre-wrap">{item.text}</p>
+                            {item.image && <img src={item.image} className="mt-3 rounded-xl w-full border border-slate-100" />}
+                        </div>
+                    ))
+                )}
+                
+                {activeTab === 'performance' && (
+                    data.remarks.length === 0 ? <p className="text-center text-slate-400 py-10">No approved remarks yet.</p> :
+                    data.remarks.map(item => (
+                        <div key={item.id} className="bg-white p-5 rounded-2xl shadow-sm border-l-4 border-indigo-500 animate-in fade-in">
+                             <div className="flex justify-between items-center mb-2">
+                                <span className="text-xs font-bold text-slate-400">{item.date}</span>
+                            </div>
+                            <p className="text-slate-800 font-medium italic">"{item.text}"</p>
+                            <p className="text-right text-xs text-slate-400 mt-2">- {item.teacherName}</p>
+                        </div>
+                    ))
+                )}
+
+                {activeTab === 'history' && (
+                     <div className="space-y-4 animate-in fade-in">
+                         {/* Monthly Breakdown Card */}
+                         {Object.keys(data.history).length === 0 ? (
+                             <div className="text-center py-10 text-slate-400">No attendance history yet.</div>
+                         ) : (
+                             Object.entries(data.history).map(([month, stat]) => (
+                                 <div key={month} className="bg-white p-4 rounded-xl shadow-sm border border-slate-100">
+                                     <h4 className="font-bold text-slate-800 mb-3">{month}</h4>
+                                     <div className="flex justify-between items-center text-sm">
+                                         <div className="flex flex-col items-center p-2 bg-emerald-50 rounded-lg w-20">
+                                             <span className="font-bold text-emerald-600 text-lg">{stat.p}</span>
+                                             <span className="text-[10px] text-emerald-600 uppercase">Present</span>
+                                         </div>
+                                         <div className="flex flex-col items-center p-2 bg-rose-50 rounded-lg w-20">
+                                             <span className="font-bold text-rose-600 text-lg">{stat.a}</span>
+                                             <span className="text-[10px] text-rose-600 uppercase">Absent</span>
+                                         </div>
+                                         <div className="flex flex-col items-center p-2 bg-amber-50 rounded-lg w-20">
+                                             <span className="font-bold text-amber-600 text-lg">{stat.l}</span>
+                                             <span className="text-[10px] text-amber-600 uppercase">Leave</span>
+                                         </div>
+                                     </div>
+                                 </div>
+                             ))
+                         )}
+                     </div>
+                )}
+            </div>
+        </div>
+        <div className="mt-8 relative z-20">
+            <Footer dark={true} />
+        </div>
+    </div>
+  );
+};
+
+// --- Styles Helper Classes ---
+const buttonBase = "px-4 py-2 rounded-lg font-medium transition-all active:scale-95";
+
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [firebaseReady, setFirebaseReady] = useState(false);
+
+  useEffect(() => {
+    const init = async () => {
+        try {
+            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                await signInWithCustomToken(auth, __initial_auth_token);
+            } else {
+                await signInAnonymously(auth);
+            }
+        } catch (e) { 
+            console.error(e); 
+        } finally {
+            setFirebaseReady(true);
+        }
+    };
+    init();
+  }, []);
+
+  if (!firebaseReady) return <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-400 font-medium animate-pulse">Loading Portal...</div>;
+  if (!user) return <Login onLogin={setUser} />;
+  
+  if (user.role === 'admin') return <AdminDashboard currentUser={user} onLogout={() => setUser(null)} />;
+  if (user.role === 'teacher') return <TeacherDashboard currentUser={user} onLogout={() => setUser(null)} />;
+  if (user.role === 'student') return <StudentDashboard currentUser={user} onLogout={() => setUser(null)} />;
+  
+  return (
+      <div className="min-h-screen flex flex-col items-center justify-center gap-4">
+          <p className="text-rose-500 font-bold">Error: Unknown Role ({user.role})</p>
+          <button onClick={() => setUser(null)} className="px-4 py-2 bg-slate-800 text-white rounded">Logout</button>
+      </div>
+  );
+}
